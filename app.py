@@ -18,7 +18,16 @@ except OSError:
     pypandoc.download_pandoc()
 
 app = Flask(__name__)
+# --- ΟΡΙΟ ΜΕΓΕΘΟΥΣ ΑΡΧΕΙΟΥ (30 MB) ---
+app.config['MAX_CONTENT_LENGTH'] = 30 * 1024 * 1024  # 30 Megabytes
 
+# Διαχείριση σφάλματος αν το αρχείο ξεπεράσει τα 30MB
+from werkzeug.exceptions import RequestEntityTooLarge
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_file_too_large(e):
+    return jsonify({"error": "Το αρχείο είναι πολύ μεγάλο. Το μέγιστο επιτρεπτό όριο είναι 30MB."}), 413
+# -------------------------------------
 # --- 2. Διπλή Κλειδαριά: Ασφάλεια και Domain Restriction ---
 # Επιτρέπει μόνο τα kidmedia.gr, kidmedia.net, kidmedia.eu και τα subdomains τους.
 ALLOWED_ORIGINS_PATTERN = re.compile(r"^https?://([a-zA-Z0-9-]+\.)*kidmedia\.(gr|net|eu)(:\d+)?$")
