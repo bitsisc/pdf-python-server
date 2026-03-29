@@ -6,7 +6,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 # Conversion Libraries
-import fitz  # PyMuPDF
+import pymupdf4llm
 import pypandoc
 
 # --- 1. Αυτόματη εγκατάσταση του Pandoc στον server (Render.com) ---
@@ -65,12 +65,20 @@ logger = logging.getLogger(__name__)
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.odt'}
 
 def extract_pdf(file_path):
-    """Extract text from PDF using PyMuPDF (fitz)."""
-    text_blocks = []
-    with fitz.open(file_path) as doc:
-        for page in doc:
-            text_blocks.append(page.get_text("text"))
-    return "\n".join(text_blocks)
+    """Extract Markdown from PDF using pymupdf4llm."""
+    # Convert the PDF directly into LLM-ready Markdown
+    # This automatically preserves structural elements like lists, headers, and tables.
+    md_text = pymupdf4llm.to_markdown(file_path)
+    
+    # Clean up common pagination artifacts
+    # 1. Remove patterns like "Page 1", "page 2 of 10" on their own lines
+    md_text = re.sub(r'(?im)^\s*page\s+\d+(?:\s+of\s+\d+)?\s*$', '', md_text)
+    # 2. Remove isolated digit-only lines (typical floating page numbers)
+    md_text = re.sub(r'(?im)^\s*\d+\s*$', '', md_text)
+    # 3. Collapse multiple blank lines that may result from artifact removal
+    md_text = re.sub(r'\n{3,}', '\n\n', md_text)
+    
+    return md_text.strip()
 
 def extract_with_pandoc(file_path):
     """Extract Markdown from DOCX and ODT using the powerful Pandoc engine."""
