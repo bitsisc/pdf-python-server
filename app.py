@@ -2,10 +2,12 @@ import os
 import tempfile
 import logging
 import re
+import gc
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 # Conversion Libraries
+import fitz  # PyMuPDF
 import pymupdf4llm
 import pypandoc
 
@@ -26,7 +28,14 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_file_too_large(e):
-    return jsonify({"error": "Το αρχείο είναι πολύ μεγάλο. Το μέγιστο επιτρεπτό όριο είναι 30MB."}), 413
+    response = jsonify({"error": "The file is too large or too complex to process. Please try a smaller file or try again later."})
+    
+    # Προσθήκη CORS Headers στο custom error response
+    origin = request.headers.get('Origin')
+    if origin and ALLOWED_ORIGINS_PATTERN.match(origin):
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        
+    return response, 413
 # -------------------------------------
 # --- 2. Διπλή Κλειδαριά: Ασφάλεια και Domain Restriction ---
 # Επιτρέπει μόνο τα kidmedia.gr, kidmedia.net, kidmedia.eu και τα subdomains τους.
@@ -66,9 +75,23 @@ ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.odt'}
 
 def extract_pdf(file_path):
     """Extract Markdown from PDF using pymupdf4llm."""
-    # Convert the PDF directly into LLM-ready Markdown
-    # This automatically preserves structural elements like lists, headers, and tables.
-    md_text = pymupdf4llm.to_markdown(file_path)
+    md_text = ""
+    
+    # Open document briefly to get total number of pages
+    doc = fitz.open(file_path)
+    total_pages = len(doc)
+    doc.close()
+
+    # Process page-by-page to minimize memory usage (OOM prevention)
+    for page_num in range(total_pages):
+        # Convert only the specific page
+        page_md = pymupdf4llm.to_markdown(file_path, pages=[page_num])
+        
+        # Append to our total md text
+        md_text += page_md + "\n\n"
+        
+        # Explicit garbage collection to free RAM on the 512MB limit server
+        gc.collect()
     
     # Clean up common pagination artifacts
     # 1. Remove patterns like "Page 1", "page 2 of 10" on their own lines
@@ -127,7 +150,16 @@ def convert_document():
 
     except Exception as e:
         logger.error(f"Error processing file {file.filename}: {str(e)}")
-        return jsonify({"error": f"Internal server error during conversion: {str(e)}"}), 500
+        # English error message per user request for timeouts/OOM/complex files
+        error_msg = "The file is too large or too complex to process. Please try a smaller file or try again later."
+        response = jsonify({"error": error_msg})
+        
+        # Ensure CORS is added to the error response
+        origin = request.headers.get('Origin')
+        if origin and ALLOWED_ORIGINS_PATTERN.match(origin):
+            response.headers.add('Access-Control-Allow-Origin', origin)
+            
+        return response, 500
 
     finally:
         # Guaranteed cleanup of the temporary file
